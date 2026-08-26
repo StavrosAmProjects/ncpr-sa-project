@@ -42,15 +42,14 @@ import time
 import functools
 from dataclasses import dataclass, field
 from typing import Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
-USER_AGENT = (
-    "cylaw-research-bot/0.1 (personal research use; "
-    "contact: set-your-email-here@example.com)"
-)
+# Set CYLAW_CONTACT_EMAIL in the deployment environment.  A real contact
+# address is important when making automated requests to a small public site.
+USER_AGENT = "cylaw-research-bot/0.2 (legal research; contact: {email})"
 
 CYLAW_BASE = "https://cylaw.org"
 CYLII_BASE = "https://cylii.org"
@@ -100,7 +99,9 @@ class CyLawClient:
 
     def __init__(self, session: Optional[requests.Session] = None, cache_size: int = 256):
         self.session = session or requests.Session()
-        self.session.headers.update({"User-Agent": USER_AGENT})
+        import os
+        email = os.getenv("CYLAW_CONTACT_EMAIL", "operator@example.invalid")
+        self.session.headers.update({"User-Agent": USER_AGENT.format(email=email)})
         self._limiter = _RateLimiter(MIN_REQUEST_INTERVAL_SECONDS)
         self._get_cached = functools.lru_cache(maxsize=cache_size)(self._get_raw)
 
@@ -148,7 +149,15 @@ class CyLawClient:
                 continue
             if keyword and keyword.lower() not in title.lower():
                 continue
-            number_match = re.match(r"^([^\s,]+)", title)
+            # Listings put the file/application number in the preceding cell;
+            # using the first word of the party name was incorrect.
+            number_cell = link.find_parent("tr")
+            number_text = ""
+            if number_cell:
+                cells = number_cell.find_all("td")
+                if cells:
+                    number_text = cells[0].get_text(" ", strip=True)
+            number_match = re.match(r"^([^\s(]+(?:/[^\s(]+)?)", number_text)
             hits.append(
                 CaseHit(
                     number=number_match.group(1) if number_match else "",
@@ -186,11 +195,16 @@ class CyLawClient:
     # ---------- document retrieval (works for either site) ----------
 
     def get_document(self, url: str) -> DocumentResult:
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or parsed.hostname not in {"cylaw.org", "www.cylaw.org", "cylii.org", "www.cylii.org"}:
+            raise ValueError("url must be an https URL on cylaw.org or cylii.org")
         html = self._get(url)
         soup = BeautifulSoup(html, "html.parser")
 
-        title_tag = soup.find("title")
-        title = title_tag.get_text(strip=True) if title_tag else url
+        # CyLII uses the generic browser title "Cylaw".  The decision title
+        # is the first visible heading-like span in main instead.
+        title_tag = soup.select_one("main .pt-4 span") or soup.find("title")
+        title = title_tag.get_text(" ", strip=True) if title_tag else url
 
         # Strip nav/script/style noise, keep body text
         for tag in soup(["script", "style", "nav", "header", "footer"]):

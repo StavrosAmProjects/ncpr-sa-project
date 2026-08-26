@@ -19,6 +19,7 @@ and it can locate and read cases for you on demand.
 from __future__ import annotations
 
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
@@ -82,8 +83,9 @@ def browse_cylaw(
 
 @app.get("/document", response_model=DocumentOut)
 def get_document(url: str = Query(..., description="a cylaw.org or cylii.org document URL")):
-    if "cylaw.org" not in url and "cylii.org" not in url:
-        raise HTTPException(status_code=400, detail="url must be on cylaw.org or cylii.org")
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in {"cylaw.org", "www.cylaw.org", "cylii.org", "www.cylii.org"}:
+        raise HTTPException(status_code=400, detail="url must be an https URL on cylaw.org or cylii.org")
     try:
         doc: DocumentResult = client.get_document(url)
     except Exception as e:
@@ -95,3 +97,9 @@ def get_document(url: str = Query(..., description="a cylaw.org or cylii.org doc
 def known_sections():
     """A short, hand-curated list of cylii.org section paths to start from."""
     return client.KNOWN_CYLII_SECTIONS
+
+
+@app.get("/health", tags=["service"])
+def health():
+    """Lightweight deployment health check; does not call either source site."""
+    return {"status": "ok"}

@@ -13,6 +13,18 @@ uvicorn api:app --reload --port 8008
 
 Interactive docs then appear at `http://localhost:8008/docs`.
 
+## Deploy and connect it as a ChatGPT Action
+
+This repository now contains a `Dockerfile` and `render.yaml`. In Render,
+create a **Blueprint** from this repository and set `CYLAW_CONTACT_EMAIL` to
+an address that can receive polite scraper enquiries. Render will give the
+service a public URL such as `https://cylaw-api-xxxx.onrender.com`.
+
+First verify `https://YOUR-URL/health` returns `{"status":"ok"}`. Then open
+`openapi.action.yaml`, replace its one server URL placeholder with that exact
+public URL, and paste the resulting YAML into the Action schema editor. The
+API itself also exposes its live OpenAPI document at `https://YOUR-URL/openapi.json`.
+
 ## Endpoints
 
 | Method | Path            | Purpose                                                        |

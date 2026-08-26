@@ -1,0 +1,61 @@
+openapi: 3.1.0
+info:
+  title: CyLaw / CyLII Lookup
+  description: Unofficial read-only lookup over the public cylaw.org and cylii.org legal databases. Not affiliated with the Cyprus Bar Association.
+  version: 0.2.0
+servers:
+  - url: https://REPLACE_WITH_YOUR_RENDER_OR_CUSTOM_DOMAIN
+paths:
+  /browse/cylii:
+    get:
+      operationId: browseCylii
+      summary: List or filter cases from a CyLII section
+      parameters:
+        - {name: section, in: query, required: true, schema: {type: string}, description: "For example: cy/cases/diait/aap"}
+        - {name: year, in: query, required: false, schema: {type: integer}}
+        - {name: keyword, in: query, required: false, schema: {type: string}}
+      responses:
+        '200': {description: Matching cases, content: {application/json: {schema: {$ref: '#/components/schemas/CaseHitList'}}}}
+  /browse/cylaw:
+    get:
+      operationId: browseCylaw
+      summary: List or filter cases from a CyLaw static index page
+      parameters:
+        - {name: index_path, in: query, required: true, schema: {type: string}, description: "For example: supreme/index_2024.html"}
+        - {name: keyword, in: query, required: false, schema: {type: string}}
+      responses:
+        '200': {description: Matching cases, content: {application/json: {schema: {$ref: '#/components/schemas/CaseHitList'}}}}
+  /document:
+    get:
+      operationId: getDocument
+      summary: Fetch the full text of a CyLaw or CyLII document
+      parameters:
+        - {name: url, in: query, required: true, schema: {type: string, format: uri}, description: "An HTTPS URL on cylaw.org or cylii.org"}
+      responses:
+        '200': {description: Document text, content: {application/json: {schema: {$ref: '#/components/schemas/Document'}}}}
+  /sections:
+    get:
+      operationId: listKnownSections
+      summary: List starter CyLII section paths
+      responses:
+        '200': {description: Known section paths, content: {application/json: {schema: {type: object, additionalProperties: {type: string}}}}}
+components:
+  schemas:
+    CaseHit:
+      type: object
+      required: [number, title, url, source]
+      properties:
+        number: {type: string}
+        title: {type: string}
+        url: {type: string, format: uri}
+        source: {type: string, enum: [cylaw, cylii]}
+    CaseHitList:
+      type: array
+      items: {$ref: '#/components/schemas/CaseHit'}
+    Document:
+      type: object
+      required: [url, title, text]
+      properties:
+        url: {type: string, format: uri}
+        title: {type: string}
+        text: {type: string}
