@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
-from scraper import CyLawClient, CaseHit, DocumentResult
+from scraper import CyLawClient, CaseHit, DocumentResult, RuleHit
 
 app = FastAPI(
     title="CyLaw/CyLII lookup API (unofficial)",
@@ -52,8 +52,19 @@ class DocumentOut(BaseModel):
     text: str
 
 
+class RuleHitOut(BaseModel):
+    number: str
+    title: str
+    url: str
+    text: str
+
+
 def _to_out(hit: CaseHit) -> CaseHitOut:
     return CaseHitOut(number=hit.number, title=hit.title, url=hit.url, source=hit.source)
+
+
+def _rule_to_out(hit: RuleHit) -> RuleHitOut:
+    return RuleHitOut(number=hit.number, title=hit.title, url=hit.url, text=hit.text)
 
 
 @app.get("/browse/cylii", response_model=list[CaseHitOut])
@@ -79,6 +90,35 @@ def browse_cylaw(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"upstream fetch failed: {e}")
     return [_to_out(h) for h in hits]
+
+
+@app.get("/search/cylaw", response_model=list[CaseHitOut])
+def search_cylaw(
+    query: str = Query(..., min_length=2, description="Full-text legal search terms, preferably in Greek"),
+    collection: str = Query("supreme", description="supreme, courtOfAppeal, supremeAdministrative, administrativeCourtOfAppeal, or apofaseis/aad"),
+    limit: int = Query(10, ge=1, le=20),
+):
+    """Search the public CyLaw full-text index; results are relevance-ranked."""
+    try:
+        hits = client.search_cylaw_fulltext(query, collection=collection, limit=limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"upstream fetch failed: {e}")
+    return [_to_out(h) for h in hits]
+
+
+@app.get("/search/new-cpr", response_model=list[RuleHitOut])
+def search_new_cpr(
+    query: str = Query(..., min_length=2, description="Greek or English New Civil Procedure Rules topic"),
+    limit: int = Query(10, ge=1, le=20),
+):
+    """Search the text of the public New Civil Procedure Rules."""
+    try:
+        hits = client.search_new_cpr(query, limit=limit)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"upstream fetch failed: {e}")
+    return [_rule_to_out(h) for h in hits]
 
 
 @app.get("/document", response_model=DocumentOut)

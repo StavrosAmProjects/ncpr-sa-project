@@ -1,11 +1,30 @@
 openapi: 3.1.0
 info:
-  title: CyLaw / CyLII Lookup
-  description: Unofficial read-only lookup over the public cylaw.org and cylii.org legal databases. Not affiliated with the Cyprus Bar Association.
-  version: 0.2.0
+  title: CyLaw / CyLII Legal Research
+  description: Read-only Cyprus legal research over public CyLaw and CyLII material, including full-text case-law search and New Civil Procedure Rules retrieval. Not affiliated with the Cyprus Bar Association.
+  version: 0.3.0
 servers:
-  - url: https://REPLACE_WITH_YOUR_RENDER_OR_CUSTOM_DOMAIN
+  - url: https://cylaw-api.onrender.com
 paths:
+  /search/cylaw:
+    get:
+      operationId: searchCylawFullText
+      summary: Search the full text of Cyprus judgments on CyLaw
+      parameters:
+        - {name: query, in: query, required: true, schema: {type: string}, description: "Use Greek legal terms where possible, e.g. απόφαση ερήμην, σημείωμα εμφάνισης, παραμερισμός."}
+        - {name: collection, in: query, required: false, schema: {type: string, default: supreme, enum: [supreme, courtOfAppeal, supremeAdministrative, administrativeCourtOfAppeal, apofaseis/aad]}}
+        - {name: limit, in: query, required: false, schema: {type: integer, default: 10, minimum: 1, maximum: 20}}
+      responses:
+        '200': {description: Relevance-ranked case results, content: {application/json: {schema: {$ref: '#/components/schemas/CaseHitList'}}}}
+  /search/new-cpr:
+    get:
+      operationId: searchNewCivilProcedureRules
+      summary: Find relevant public New Civil Procedure Rules material
+      parameters:
+        - {name: query, in: query, required: true, schema: {type: string}, description: "Rule topic in Greek or English, for example default appearance, default judgment, set aside, service, or small claims."}
+        - {name: limit, in: query, required: false, schema: {type: integer, default: 10, minimum: 1, maximum: 20}}
+      responses:
+        '200': {description: Relevant rules or forms with text, content: {application/json: {schema: {$ref: '#/components/schemas/RuleHitList'}}}}
   /browse/cylii:
     get:
       operationId: browseCylii
@@ -38,7 +57,17 @@ paths:
       operationId: listKnownSections
       summary: List starter CyLII section paths
       responses:
-        '200': {description: Known section paths, content: {application/json: {schema: {type: object, additionalProperties: {type: string}}}}}
+        '200':
+          description: Known section paths
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  supreme_court: {type: string}
+                  administrative_court: {type: string}
+                  tender_review_authority: {type: string}
+                  competition_commission: {type: string}
 components:
   schemas:
     CaseHit:
@@ -52,6 +81,16 @@ components:
     CaseHitList:
       type: array
       items: {$ref: '#/components/schemas/CaseHit'}
+    RuleHit:
+      type: object
+      properties:
+        number: {type: string}
+        title: {type: string}
+        url: {type: string, format: uri}
+        text: {type: string}
+    RuleHitList:
+      type: array
+      items: {$ref: '#/components/schemas/RuleHit'}
     Document:
       type: object
       required: [url, title, text]

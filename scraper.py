@@ -40,9 +40,10 @@ from __future__ import annotations
 import re
 import time
 import functools
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlencode, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -71,6 +72,14 @@ class DocumentResult:
     title: str
     text: str
     raw_html: str = field(repr=False, default="")
+
+
+@dataclass
+class RuleHit:
+    number: str
+    title: str
+    url: str
+    text: str
 
 
 class _RateLimiter:
@@ -190,6 +199,101 @@ class CyLawClient:
             hits.append(
                 CaseHit(number="", title=title, url=urljoin(url, href), source="cylaw")
             )
+        return hits
+
+    def search_cylaw_fulltext(
+        self, query: str, *, collection: str = "supreme", limit: int = 10
+    ) -> list[CaseHit]:
+        """Search CyLaw's public full-text index and return a small ranked set.
+
+        This uses the search form published at cylaw.org; it is not a private
+        API.  The collection values are CyLaw's public search masks.
+        """
+        allowed = {
+            "supreme", "courtOfAppeal", "supremeAdministrative",
+            "administrativeCourtOfAppeal", "apofaseis/aad",
+        }
+        if collection not in allowed:
+            raise ValueError("unknown collection")
+        limit = max(1, min(limit, 20))
+        params = {
+            "searchoption": "1", "query": query, "hitsnom": str(limit),
+            "nexthit": "1", "view": "relevance", "masks": collection,
+        }
+        # CyLaw's legacy CGI expects Greek search terms in Windows-1253 rather
+        # than UTF-8.  Without this, Greek full-text queries silently return
+        # no results even though the public search form works in a browser.
+        encoded = urlencode(params, encoding="cp1253", errors="strict")
+        html = self._get(f"{CYLAW_BASE}/cgi-bin/sinocgi.pl?{encoded}")
+        soup = BeautifulSoup(html, "html.parser")
+        hits: list[CaseHit] = []
+        seen: set[str] = set()
+        for link in soup.select("a[href*='/cgi-bin/open.pl?file=']"):
+            href = link.get("href", "")
+            title = link.get_text(" ", strip=True)
+            if not href or not title:
+                continue
+            url = urljoin(CYLAW_BASE, href)
+            if url in seen:
+                continue
+            seen.add(url)
+            hits.append(CaseHit(number="", title=title, url=url, source="cylaw"))
+        return hits
+
+    def search_new_cpr(self, query: str, *, limit: int = 10) -> list[RuleHit]:
+        """Search the text of the public New Civil Procedure Rules pages."""
+        index_url = f"{CYLAW_BASE}/apofaseis2/ncpr/ncpr-i-1.html"
+        soup = BeautifulSoup(self._get(index_url), "html.parser")
+        # The rules are published in Greek.  These topic expansions let the
+        # calling GPT start from ordinary English legal phrasing as well.
+        expansions = {
+            "default": ["ερήμην"],
+            "appearance": ["εμφάνισης", "ερήμην"],
+            "default judgment": ["απόφαση ερήμην", "παραμερισμός"],
+            "set aside": ["παραμερισμός", "διαφοροποίηση"],
+            "service": ["επίδοση"],
+            "small claims": ["μικρές απαιτήσεις"],
+        }
+        lowered_query = query.lower()
+        def _plain(value: str) -> str:
+            return "".join(
+                char for char in unicodedata.normalize("NFD", value.lower())
+                if not unicodedata.combining(char)
+            )
+
+        terms = [_plain(term) for term in re.findall(r"[\wΆ-ώ]+", query) if len(term) > 2]
+        for phrase, extra_terms in expansions.items():
+            if phrase in lowered_query:
+                terms.extend(_plain(term) for term in extra_terms)
+        candidates: list[tuple[int, str, str]] = []
+        seen: set[str] = set()
+        for link in soup.select("a[href*='/apofaseis/ncpr/ncpr-']"):
+            href = link.get("href", "")
+            url = urljoin(index_url, href)
+            if not href or url in seen:
+                continue
+            heading = link.get_text(" ", strip=True)
+            # Filter on the index first. It avoids an expensive 50-page scan
+            # and keeps the endpoint safely inside the Action timeout.
+            plain_heading = _plain(heading)
+            if terms and not any(term in plain_heading for term in terms):
+                continue
+            seen.add(url)
+            score = sum(1 for term in terms if term in plain_heading)
+            if "εντυπο" in plain_heading:
+                score -= 10
+            else:
+                score += 5
+            candidates.append((score, heading, url))
+
+        hits: list[RuleHit] = []
+        for _, heading, url in sorted(candidates, reverse=True):
+            rule_soup = BeautifulSoup(self._get(url), "html.parser")
+            text = rule_soup.get_text(" ", strip=True)
+            number = heading.split(".", 1)[0].strip() if "." in heading else ""
+            hits.append(RuleHit(number=number, title=heading, url=url, text=text[:12000]))
+            if len(hits) >= max(1, min(limit, 20)):
+                break
         return hits
 
     # ---------- document retrieval (works for either site) ----------
